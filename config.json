@@ -1,10 +1,10 @@
 {
-    "significantLowMarker": "15",
-    "profitPerUnit": "10",
-    "sigLowBreach": ["2","11"],
-    "fibOscillations":["3","3"],
-    "perUnitProfit": "10",
-    "unitsToBuy": "300",
-    "checkSigLowAge": "0",
-    "significantLowExpiryInMinutes": "75"  
+    "significantLowMarker": 15,
+    "profitPerUnit": 10,
+    "sigLowBreach": [2,11],
+    "fibOscillations":[3,3],
+    "perUnitProfit": 10,
+    "unitsToBuy": 300,
+    "checkSigLowAge": false,
+    "significantLowExpiryInMinutes": 45  
 }

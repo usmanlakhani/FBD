@@ -5,6 +5,7 @@ class Transaction:
         self.timeStamp = None
         self.boughtAt = None
         self.perUnitProfit = None
-        self.soldAt = None
+        self.willSellAt = None
         self.units = None
+        self.wasSold = None
     

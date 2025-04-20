@@ -10,4 +10,7 @@ class SignificantLow:
         self.downBreach = None
         self.upBreach = None
         self.sigLowComment = None
+        self.expiresOn = None
+        self.state = None
+        self.searchingForUpwardBreach = None
         

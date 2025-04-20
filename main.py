@@ -1,3 +1,4 @@
+import inspect
 import json
 import pandas as pd
 import os
@@ -34,7 +35,7 @@ def load_file(fileName):
 #region initiate
 def initiate(fileName):
     
-    significantLowsList = []
+    significantLow = None
     fibonnaciDict = None
     ticker = Ticker()
     config = None
@@ -60,249 +61,175 @@ def initiate(fileName):
       
     #region Data Processing
     for idx, row in df.iterrows():
-        checkSigLowAge = int(config["checkSigLowAge"])
         
-        if checkSigLowAge == 1:
-            ''' Check Age of Sig Low'''
-            if len(significantLowsList) > 0:
-                significantLowsList,resetLowestPrice = removeStaleSignificantLows(significantLowsList,row.iloc[0],config)
-
-                if significantLowsList is None:
-                
-                    errorTicker = errorTicker(excelRow,timeStamp,"Error clearing out expired SL")
-                    printInfo (errorTicker,None)
-                    return
-                else:
-                    if resetLowestPrice:
-                        ticker.lowestPrice = None
-    
-        
-#        userInput = input()  
-#        if userInput == 'q':
-#            return     
-        timeStamp = row.iloc[0]
+        #region extracting value from row
+        timeStamp = datetime.strptime(row.iloc[0], "%Y-%m-%d %H:%M")
         tmpCurrentHighPrice = float(row.iloc[1])
         tmpCurrentLowPrice = float(row.iloc[2])
         excelRow = idx + 1
-
-        #region Fib
-        #'''Fibonnaci logic'''
-        #if fibonnaciDict is not None:
-        #    fibonnaciDict = checkFibAction(fibonnaciDict,tmpCurrentLowPrice,excelRow,timeStamp,config)
         #endregion
         
-        #region We have NO Significant Low Price and this is the first row
+        #region Significant Low Age Check
+        '''Any Significant Low that is older than allowed time has to be ignored and removed'''
+        try:
+            if (config['checkSigLowAge'] and (significantLow is not None and significantLow.state is not None)):
+                if (isActive(significantLow,timeStamp)):
+                    ticker.lowestPrice = None
+                    significantLow = None
+                    print("\t\t\tSignificant Low has aged; Ignore and find new Significant Low")
+        except Exception as ex: 
+                frame = inspect.trace()[-1]
+                method_name = frame.function
+                print("Method:" + method_name + ", excelRow", excelRow, "@ timestamp", timeStamp,ex)       
+        #endregion Significant Low Age Check
+        
+        #region Is the price right to sell ?
+        try:
+            transactionsList = sell(transactionsList,tmpCurrentHighPrice)
+        except Exception as ex:
+            frame = inspect.trace()[-1]
+            method_name = frame.function
+            print("Method:" + method_name + ", excelRow", excelRow, "@ timestamp", timeStamp,ex)  
+        #endregion
+        
+        
+        #region Nothing is known at this point
         if ticker.lowestPrice is None:
-            
-            ticker = updateTicker(tmpCurrentLowPrice,tmpCurrentLowPrice,tmpCurrentHighPrice,timeStamp,excelRow, "New Low")
-            
-            if ticker is None:
-                errorTicker = errorTicker(excelRow,timeStamp,"Error")
-                printInfo(errorTicker,significantLowsList)
+            try:
+                ticker = updateTicker(tmpCurrentLowPrice,tmpCurrentLowPrice,tmpCurrentHighPrice,timeStamp,excelRow,"New lowest price set @" + str(tmpCurrentLowPrice))
+                printInfo(ticker, None)
+            except Exception as ex:
+                frame = inspect.trace()[-1]
+                method_name = frame.function
+                print("Method:" + method_name + ", excelRow", excelRow, "@ timestamp", timeStamp,ex)
                 return
             
-            else:
-                printInfo(ticker,significantLowsList)
-                continue
+            '''Call printinfo here'''
+            continue
         #endregion
         
-        #region When the list of significant lows is empty
-        if len(significantLowsList) == 0:
+        #region No significant low is known off
+        if significantLow is None or significantLow.state is None:
             
-            if ticker.lowestPrice >= tmpCurrentLowPrice:
-                
-                ticker = updateTicker(tmpCurrentLowPrice,tmpCurrentLowPrice,tmpCurrentHighPrice,timeStamp,excelRow, "New Low")
-                
-                if ticker is None:
-                    errorTicker = errorTicker(excelRow,timeStamp,"Error")
-                    printInfo(errorTicker,significantLowsList)
+            if tmpCurrentLowPrice <= ticker.lowestPrice:
+                try:
+                    ticker = updateTicker(tmpCurrentLowPrice,tmpCurrentLowPrice,tmpCurrentHighPrice,timeStamp,excelRow,"New lowest price set @" + str(tmpCurrentLowPrice))
+                    '''Call printinfo'''
+                    printInfo(ticker, None)
+                except Exception as ex:
+                    frame = inspect.trace()[-1]
+                    method_name = frame.function
+                    print("Method:" + method_name + ", excelRow", excelRow, "@ timestamp", timeStamp,ex)
                     return
-                
-                printInfo(ticker,significantLowsList)
                 continue
             
-            if ticker.lowestPrice < tmpCurrentLowPrice:
+            if tmpCurrentLowPrice > ticker.lowestPrice:
                 
-                tmpMarker = int(config['significantLowMarker'])
+                howHigh = abs(tmpCurrentLowPrice - ticker.lowestPrice)
                 
-                difference = tmpCurrentLowPrice - ticker.lowestPrice
-                
-                if difference < tmpMarker:
-                    '''I should update ticker even though it doesnt matter ...'''
-                    ticker = updateTicker(ticker.lowestPrice,tmpCurrentLowPrice,tmpCurrentHighPrice,timeStamp,excelRow, None)
+                #region Marker check
+                if howHigh >= config["significantLowMarker"]:
                     
-                    if ticker is None:
-                        errorTicker = errorTicker(excelRow,timeStamp,"Error")
-                        printInfo(errorTicker,significantLowsList)
+                    '''Significant Low Found'''
+                    try:
+                        ticker = updateTicker(ticker.lowestPrice,tmpCurrentLowPrice,tmpCurrentHighPrice,timeStamp,excelRow,"Significant Low set @" + str(ticker.lowestPrice))
+                        '''Call printinfo'''
+                        printInfo(ticker, None)
+                    except Exception as ex:
+                        frame = inspect.trace()[-1]
+                        method_name = frame.function
+                        print("Method:" + method_name + ", excelRow", excelRow, "@ timestamp", timeStamp,ex)
                         return
                     
-                    printInfo(ticker,significantLowsList)
+                    try:
+                        significantLow = setSignificantLow(timeStamp,ticker.lowestPrice,config['significantLowExpiryInMinutes'],'Active')
+                        '''No need to call printinfo'''
+                        #printInfo(ticker)
+                        
+                    except Exception as ex:
+                        frame = inspect.trace()[-1]
+                        method_name = frame.function
+                        print("Method:" + method_name + ", excelRow", excelRow, "@ timestamp", timeStamp,ex)                        
+                        return
                     
                     continue
-                
-                if difference >= tmpMarker:
-                    
-                    significantLow = setSignificantLow(timeStamp, ticker.lowestPrice)
-                    
-                    if significantLow is None:
-                        errorTicker = errorTicker(excelRow, timeStamp, "Error setting Sig Low")
-                        printInfo(errorTicker, None)
-                        return
-                    
-                    significantLowsList.append(significantLow)
-                    
-                    fibonnaciBaseline = setFibonnaciBaseLine(tmpCurrentLowPrice,timeStamp,excelRow)
-                    
-                    if fibonnaciBaseline is None:
-                        errorTicker = errorTicker(excelRow, timeStamp, "Error setting Fib baseline")
-                        printInfo(errorTicker, None)
-                        return
-                    else:
-                        fibonnaciDict = {}
-                        fibonnaciDict['baseline'] = fibonnaciBaseline
-                        #fibonnaciDict = addFibLevels(fibonnaciDict,timeStamp)
-                    
-                    ticker = updateTicker(ticker.lowestPrice,tmpCurrentLowPrice,tmpCurrentHighPrice,timeStamp,excelRow, "Found Sig Low")
-                    
-                    if ticker is None:
-                        errorTicker = errorTicker(excelRow,timeStamp,"Error")
-                        printInfo(errorTicker,None)      
-                        return
-                    
-                    printInfo(ticker,significantLowsList)
-                    
-                    continue
-        #endregion
-    
-        #region When there is something in the significant low list
-        if len(significantLowsList) > 0:
-            
-            slPrice = significantLowsList[0].price
-            
-            if (tmpCurrentLowPrice < slPrice):
-                
-                if significantLowsList[0].downBreach == False or significantLowsList[0].downBreach is None:
-                    
-                    sigLowDownwardsBreach = isDownwardsBreach(config,slPrice,tmpCurrentLowPrice,timeStamp,excelRow)
-                    
-                    if sigLowDownwardsBreach is None:
-                        errorTicker = errorTicker(excelRow,timeStamp,"Error while confirming downward breach")
-                        printInfo(errorTicker,None)
-                        return
-                    
-                    if sigLowDownwardsBreach == -1:
-                        
-                        significantLowsList.clear()
-                        
-                        ticker = updateTicker(tmpCurrentLowPrice,tmpCurrentLowPrice,tmpCurrentHighPrice,timeStamp,excelRow, "Flush")
-                    
-                        if ticker is None:
-                    
-                            errorTicker = errorTicker(excelRow,timeStamp,"Error")
-                            printInfo(errorTicker,significantLowsList)
-                            return
-                
-                        printInfo(ticker,significantLowsList)
-                        
-                        continue
-                    
-                    if sigLowDownwardsBreach == 0:
-                        
-                        ticker = updateTicker(tmpCurrentLowPrice,tmpCurrentLowPrice,tmpCurrentHighPrice,timeStamp,excelRow, "No Downward Breach")
-                    
-                        if ticker is None:
-                    
-                            errorTicker = errorTicker(excelRow,timeStamp,"Error")
-                            printInfo(errorTicker,significantLowsList)
-                            return
-                
-                        printInfo(ticker,significantLowsList)
-                        
-                        continue
-                    
-                    if sigLowDownwardsBreach == 1:
-                        
-                        significantLowsList[0].downBreach = True
-                        
-                        ticker = updateTicker(slPrice,tmpCurrentLowPrice,tmpCurrentHighPrice,timeStamp,excelRow, "Downward Breach Confirmed")
-                        
-                        if ticker is None:
-                    
-                            errorTicker = errorTicker(excelRow,timeStamp,"Error")
-                            printInfo(errorTicker,significantLowsList)
-                            return
-                
-                        printInfo(ticker,significantLowsList)
-                        
-                        continue
-                        
-            
-            if (tmpCurrentLowPrice > slPrice):
-                
-                if significantLowsList[0].downBreach == False or significantLowsList[0].downBreach is None:
-                         
-                    ticker = updateTicker(slPrice,tmpCurrentLowPrice,tmpCurrentHighPrice,timeStamp,excelRow, "Continue")
-                
-                    if ticker is None:
-                    
-                        errorTicker = errorTicker(excelRow,timeStamp,"Error")
-                        printInfo(errorTicker,significantLowsList)
-                        return
-                
-                    printInfo(ticker,significantLowsList)                
-                    
-                    continue
-                
-                if significantLowsList[0].downBreach == True:
-                    
-                    sigLowUpwardBreach = isUpwardsBreach(config,slPrice,tmpCurrentLowPrice,timeStamp,excelRow)
-                    
-                    if sigLowUpwardBreach is None:
-                        errorTicker = errorTicker(excelRow, timeStamp, "Error looking for Upwards Breach")
-                        printInfo(errorTicker,significantLowsList)
-                        return
-                    
-                    if sigLowUpwardBreach == False:
-                        
-                        ticker = updateTicker(slPrice,tmpCurrentLowPrice,tmpCurrentHighPrice,timeStamp,excelRow,"Continue looking for Upward Breach")
-                        
-                        if ticker is None:
-                            
-                            errorTicker = errorTicker(excelRow,timeStamp,"Error")
-                            printInfo(errorTicker, None)
-                            return
-                        
-                        printInfo(ticker,significantLowsList)
-                        
-                        continue
-                    
-                    if sigLowUpwardBreach:
-                        '''Buy'''
-                        transaction = transact(excelRow,timeStamp,tmpCurrentLowPrice,config)
-                        
-                        if transaction is None:
-                            
-                            errorTicker = errorTicker(excelRow, timeStamp, "Error Buying")
-                            printInfo(errorTicker,None)
-                            return
-                        
-                        transactionsList.append(transaction)
-                        
-                        significantLowsList.clear()
-                        
-                        '''After buying, the SL is finished. Therefore we have to look for next SL; set lowestPrice to current low price'''
-                        ticker = updateTicker(tmpCurrentLowPrice,tmpCurrentLowPrice,tmpCurrentHighPrice,timeStamp,excelRow,"After BUY; Looking for New SL")
-                        
-                        if ticker is None:
-                            
-                            errorTicker = errorTicker(excelRow,timeStamp,"Error")                            
-                            printInfo(errorTicker,None)                            
-                            return
-                        
-                        printInfo(ticker,None)
 
-                        continue         
-        #endregion 
+                else:
+                    try:
+                        ticker = updateTicker(ticker.lowestPrice,tmpCurrentLowPrice,tmpCurrentHighPrice,timeStamp,excelRow,"Did not crack marker price")
+                        '''Call printinfo'''
+                        printInfo(ticker, None)
+                    except Exception as ex:
+                        frame = inspect.trace()[-1]
+                        method_name = frame.function
+                        print("Method:" + method_name + ", excelRow", excelRow, "@ timestamp", timeStamp,ex)                        
+                        return
+                    continue
+                    
+                #endregion Marker check      
+        #endregion No significant low is known off
+        
+        #region If a significant low is known
+        if significantLow.state == 'Active':
+            
+            slPrice = significantLow.price
+            
+            '''if downward breach has not occured and tmpCurrentLowPrice is less than significant low price, check for downward breach'''
+            if slPrice > tmpCurrentLowPrice and (significantLow.downBreach is None or significantLow.downBreach == "in-range"):
+                try:
+                    isDownBreachConfirmed = isDownwardsBreach(config,slPrice,tmpCurrentLowPrice)
+                
+                    '''if flush'''
+                    if isDownBreachConfirmed == "flush":
+                        ticker = updateTicker(tmpCurrentLowPrice,tmpCurrentLowPrice,tmpCurrentHighPrice,timeStamp,excelRow,"Significant Low flushed out")
+                        significantLow.state = None
+                        significantLow.downBreach = None
+                        printInfo(ticker, None)
+                    
+                    '''if breached'''
+                    if isDownBreachConfirmed == "in-range":
+                        ticker = updateTicker(ticker.lowestPrice,tmpCurrentLowPrice,tmpCurrentHighPrice,timeStamp,excelRow, "Significant Low breached downwards in-range")
+                        significantLow.downBreach = "in-range"
+                        significantLow.searchingForUpwardBreach = True
+                        printInfo(ticker, None)
+                    
+                except Exception as ex:
+                    frame = inspect.trace()[-1]
+                    method_name = frame.function
+                    print("Method:" + method_name + ", excelRow", excelRow, "@ timestamp", timeStamp,ex)                        
+                    return
+                continue
+            
+            if slPrice <= tmpCurrentLowPrice and (significantLow.downBreach is None or significantLow.downBreach == "in-range") and significantLow.searchingForUpwardBreach:
+                try:
+                    if tmpCurrentLowPrice - slPrice < config["sigLowBreach"][0]:
+                        ticker = updateTicker(ticker.lowestPrice,tmpCurrentLowPrice,tmpCurrentHighPrice,timeStamp,excelRow,"Significant Low known; No downward breach yet" if significantLow.downBreach is None else "Significant Low breached downwards in-range; Looking for Upward motion")
+                        printInfo(ticker, None)
+                    elif tmpCurrentLowPrice - slPrice >= config["sigLowBreach"][0]:
+                        '''This elif completely removes any need to call the isUpwardsBreach ... the method is unnecessary'''
+                        print("\t\t\tRow Index: " + str(excelRow) + ". A Buy opportunity")
+                        
+                        ticker = updateTicker(tmpCurrentLowPrice,tmpCurrentLowPrice,tmpCurrentHighPrice,timeStamp,excelRow,"Resetting Significant Low; Lowest Price")
+                        ''' No need to do significantLow.upBreach = True really. Once a buy is done, the Sig Low is useless and needs to be RESET TO NONE'''
+                        significantLow.upBreach = True
+                        significantLow = setSignificantLow(None,None,None,None)
+                        
+                        '''Adding logic to process transactions'''
+                        transactionsList.append(addTransaction(excelRow,timeStamp,tmpCurrentLowPrice,config))
+                        #printNewTransaction(transactionsList[len(transactionsList)-1])
+                        printInfo(ticker,transactionsList[len(transactionsList)-1])
+                        
+                except Exception as ex:
+                    frame = inspect.trace()[-1]
+                    method_name = frame.function
+                    print("Method:" + method_name + ", excelRow", excelRow, "@ timestamp", timeStamp,ex)
+                    return 
+                continue
+             
+        #endregion If a significant low is known  
+                
+        #endregion
+        
     #endregion loop    
 
 #region checkFibAction(fibonnaciDict,tmpCurrentLowPrice,excelRow,timeStamp)
@@ -333,7 +260,7 @@ def addFibLevels(fibonnaciDict,timeStamp):
     return fibonnaciDict
 #endregion
 
-#def setFibLevels
+#region setFibLevels
 def setFibLevels(fibBasePrice,key,timeStamp):
     
     fibLevel = FibonnaciLevel()
@@ -361,130 +288,108 @@ def errorTicker(excelRow,timeStamp,message):
     return ticker
 #endregion
 
-#region removeStaleSignificantLows    
-def removeStaleSignificantLows(significantLowsList,timeStamp,config):
+#region isActive    
+def isActive(significantLow,timeStamp):
     
-    try:
-        resetLowestPrice = False
+    if significantLow.expiresOn<timeStamp:
+        return True
         
-        format_str = '%Y-%m-%d %H:%M'
-        
-        allowedAging = int(config['significantLowExpiryInMinutes'])
-        
-        createTimestamp = datetime.strptime(significantLowsList[0].timeStamp,format_str)
-        
-        timeStamp = datetime.strptime(timeStamp,format_str)
-        
-        time_difference = abs(timeStamp - createTimestamp)
-        
-        total_seconds = time_difference.total_seconds()
-        
-        difference_in_minutes = total_seconds / 60
-        
-        if difference_in_minutes >=allowedAging:
-            significantLowsList.clear()
-            resetLowestPrice = True
-            print('Sig Low Found @', createTimestamp, ' is', difference_in_minutes, ' mins old and is expired')
-        
-        
-        return significantLowsList, resetLowestPrice
-     
-    except Exception as ex:
-        
-        print ("Error in removeStaleSignificantLows @",timeStamp)
-        
-        return None             
+    return False
+#endregion remove stale sig lows        
+    
+#region print ticker
+def printInfo(ticker,transaction):
+    
+    print(f'Row Index: {ticker.idExcel if ticker.idExcel!= None else ""}, \t'
+         f'@: {ticker.timeStamp if ticker.timeStamp != None else ""}, \t'
+         f'Hi: {ticker.highPrice if ticker.highPrice != None else ""},\t '
+         f'Lo: {ticker.lowPrice if ticker.lowPrice != None else ""}, \t'
+         f'Lowest: {ticker.lowestPrice if ticker.lowestPrice != None else ""}\t',
+         f'Comment: {ticker.tickerComment if ticker.tickerComment != None else ""}')
+    
+    if transaction is not None:
+
+        print (f'\t\t\tBought #: {transaction.units if transaction.units != None else ""}, \t'
+            f'@: {transaction.boughtAt if transaction.boughtAt != None else ""}, \t'
+            f'Will sell at: {transaction.willSellAt if transaction.willSellAt != None else ""},\t'
+            f'Excel Row: {transaction.idExcel}')          
+
 #endregion
 
-#region print ticker
-def printInfo(ticker,significantLowsList):
+#region print new transaction
+def printNewTransaction(transaction):
+    print(
+            f'\t\t\tComment: {"Transaction Information"}',
+            f'Row Index: {transaction.idExcel if transaction.idExcel!= None else ""}, \t'
+            f'@: {transaction.timeStamp if transaction.timeStamp != None else ""}, \t'
+            f'Hi: {transaction.boughtAt if transaction.boughtAt != None else ""},\t '
+            f'Lo: {transaction.willSellAt if transaction.willSellAt != None else ""}, \t'
+            f'Lowest: {transaction.units if transaction.units != None else ""}\t')      
+#endregion
+
+#region sell
+def sell(transactionsList,tmpCurrentHighPrice):
     
-    info =  Info()
-    info.row = ticker.idExcel
-    info.timestamp = ticker.timeStamp
-    info.high = ticker.highPrice
-    info.low = ticker.lowPrice
-    info.lowestPrice = ticker.lowestPrice
-    info.comment = ticker.tickerComment
+    list = transactionsList
     
-    if significantLowsList is not None and len(significantLowsList)>0:
-        print(f'Row Index: {info.row if info.row!= None else ""}, '
-              f'@: {info.timestamp if info.timestamp != None else ""}, '
-              f'Hi: {info.high if info.high != None else ""}, '
-              f'Lo: {info.low if info.low != None else ""}, '
-              f'Lowest: {info.lowestPrice if info.lowestPrice != None else ""}, '
-              f'Diff: {abs(info.low - info.lowestPrice) if info.low != None else ""}, '
-              f'SigLow: {significantLowsList[0].price if significantLowsList[0].price != None else ""}, '
-              f'Down: {significantLowsList[0].downBreach if significantLowsList[0].downBreach != None else "False"}, '
-              f'Up: {significantLowsList[0].upBreach if significantLowsList[0].upBreach != None else "False"}, '
-              f'Comment: {info.comment if info.comment != None else ""}')
-    else:       
-        print(f'Row Index: {info.row if info.row!= None else ""}, '
-              f'@: {info.timestamp if info.timestamp != None else ""}, '
-              f'Hi: {info.high if info.high != None else ""}, '
-              f'Lo: {info.low if info.low != None else ""}, '
-              f'Lowest: {info.lowestPrice if info.lowestPrice != None else ""}',
-              f'Comment: {info.comment if info.comment != None else ""}')           
+    if len(list) > 0:
+        
+        for eachTransaction in list:
+            
+            if eachTransaction.willSellAt <= tmpCurrentHighPrice and eachTransaction.wasSold is None:
+                
+                print('\t\t\tSelling ' + str(int(eachTransaction.units)) + ' units @ ' + str(int(tmpCurrentHighPrice)))
+                
+                eachTransaction.wasSold = True
+    
+    return list    
+        
 #endregion
 
 #region transact
-def transact(excelRow,timeStamp,tmpCurrentLowPrice,config):
-    
-    try:
-        transaction = Transaction()
-        transaction.idExcel = excelRow
-        transaction.timeStamp = timeStamp
-        transaction.boughtAt = tmpCurrentLowPrice
-        transaction.perUnitProfit = int(config["perUnitProfit"])
-        transaction.soldAt = None
-        transaction.units = int(config["unitsToBuy"])
-        return transaction  
-    except Exception as ex:
-        print ("Error in transact on row",excelRow,"@ ",timeStamp)
-        return None           
+def addTransaction(excelRow,timeStamp,tmpCurrentLowPrice,config):
+    transaction = Transaction()
+    transaction.idExcel = excelRow
+    transaction.timeStamp = timeStamp
+    transaction.boughtAt = tmpCurrentLowPrice
+    transaction.perUnitProfit = config["perUnitProfit"]
+    transaction.willSellAt = transaction.boughtAt + transaction.perUnitProfit
+    transaction.units = int(config["unitsToBuy"])
+    return transaction            
 #endregion    
 
 #region isUpwardsBreach
-def isUpwardsBreach(config,significantLowPrice,tmpCurrentLowPrice,timeStamp,excelRow):
+def isUpwardsBreach(config,significantLowPrice,tmpCurrentLowPrice):
     '''time stamp and excel row are for error messages'''
-    try:
-        breachLowerLevel = int(config["sigLowBreach"][0])
-        breachQuantity =  tmpCurrentLowPrice - significantLowPrice
+    breachLowerLevel = int(config["sigLowBreach"][0])
+    breachQuantity =  tmpCurrentLowPrice - significantLowPrice
     
-        '''0 = no breach 1, = yes breach'''
-        flag = False
+    '''0 = no breach 1, = yes breach'''
+    flag = False
     
-        if breachQuantity >= breachLowerLevel:
+    if breachQuantity >= breachLowerLevel:
             flag = True
     
-        return flag
-    
-    except Exception as ex:
-        print ("Error in isUpwardsBreach @",timeStamp, " on row:",excelRow)
-        return None
+    return flag
 #endregion
 
 #region isDownwardsBreach    
-def isDownwardsBreach(config,significantLowPrice,tmpCurrentLowPrice,timeStamp,excelRow):
+def isDownwardsBreach(config,significantLowPrice,tmpCurrentLowPrice):
     
-    try:
-        breachLowerLevel = int(config["sigLowBreach"][0])
-        breachUpperLevel = int(config["sigLowBreach"][1])
-        breachQuantity = significantLowPrice - tmpCurrentLowPrice
+    breachLowerLevel = int(config["sigLowBreach"][0])
+    breachUpperLevel = int(config["sigLowBreach"][1])
+    breachQuantity = significantLowPrice - tmpCurrentLowPrice
      
-        '''0 = no breach 1, = yes breach, -1 = flush'''
-        flag = 0
+    '''0 = no breach 1, = yes breach, -1 = flush'''
+    flag = None
     
-        if breachQuantity >= breachLowerLevel and breachQuantity <= breachUpperLevel:
-            flag = 1
+    if breachQuantity >= breachLowerLevel and breachQuantity <= breachUpperLevel:
+        flag = "in-range"
     
-        if breachQuantity > breachUpperLevel: 
-            flag = -1
+    if breachQuantity > breachUpperLevel: 
+        flag = "flush"
     
-        return flag
-    except Exception as ex:
-        print ("Error in isDownwardsBreach @",timeStamp, " on row:",excelRow)
-        return None
+    return flag
 #endregion    
     
 #region setFibonnaciBaseLine
@@ -504,31 +409,30 @@ def setFibonnaciBaseLine(tmpCurrentLowPrice,timeStamp,excelRow):
 #endregion
 
 #region setSignificantLow
-def setSignificantLow(timeStamp,currentLowPrice):
-    try:
-        sigLow = SignificantLow()
-        sigLow.timeStamp = timeStamp
-        sigLow.price = currentLowPrice
-        return sigLow
-    except Exception as ex:
-        print("Error in setSignificantLow @ timestamp:", timeStamp)
-        return None
+def setSignificantLow(timeStamp,lowestPrice,significantLowExpiryInMinutes,state):
+    sigLow = SignificantLow()
+    #sigLow.timeStamp = datetime.strptime(timeStamp, "%Y-%m-%d %H:%M")
+    sigLow.timeStamp = timeStamp
+    sigLow.price = lowestPrice
+    
+    if state is not None:
+        #sigLow.expiresOn = datetime.strptime(timeStamp, "%Y-%m-%d %H:%M") + timedelta(minutes=significantLowExpiryInMinutes)
+        sigLow.expiresOn = timeStamp + timedelta(minutes=significantLowExpiryInMinutes)
+    
+    sigLow.state = state
+    return sigLow
 #endregion
 
 #region updateTicker 
 def updateTicker(lowestPrice,tmpCurrentLowPrice,tmpCurrentHighPrice,timeStamp,excelRow,message):
-    try:
-        ticker = Ticker()
-        ticker.highPrice = tmpCurrentHighPrice
-        ticker.lowPrice = tmpCurrentLowPrice
-        ticker.timeStamp = timeStamp
-        ticker.idExcel = excelRow
-        ticker.lowestPrice = lowestPrice
-        ticker.tickerComment = message
-        return ticker 
-    except Exception as e:
-        print("Error updating ticker for Excel Row:",excelRow," @Timestamp:",timeStamp)
-        return None
+    ticker = Ticker()
+    ticker.highPrice = tmpCurrentHighPrice
+    ticker.lowPrice = tmpCurrentLowPrice
+    ticker.timeStamp = timeStamp
+    ticker.idExcel = excelRow
+    ticker.lowestPrice = lowestPrice
+    ticker.tickerComment = message
+    return ticker 
 #endregion    
 
 #region main    
