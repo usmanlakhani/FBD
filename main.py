@@ -190,7 +190,7 @@ def initiate(fileName):
                     if isDownBreachConfirmed == "in-range":
                         ticker = updateTicker(ticker.lowestPrice,tmpCurrentLowPrice,tmpCurrentHighPrice,timeStamp,excelRow, "Significant Low breached downwards in-range")
                         significantLow.downBreach = "in-range"
-                        significantLow.searchingForUpwardBreach = True
+                        significantLow.searchingForUpwardBreach = True 
                         printInfo(ticker, None)
                     
                 except Exception as ex:
